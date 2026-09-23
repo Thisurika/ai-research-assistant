@@ -1,0 +1,5 @@
+streamlit
+PyMuPDF
+tiktoken
+python-dotenv
+pytest
