@@ -3,6 +3,11 @@ import streamlit as st
 from src.chunker import create_chunks
 from src.pdf_loader import extract_text_from_pdf
 from src.tokenizer import TextTokenizer
+from src.embedding_model import EmbeddingModel
+
+@st.cache_resource
+def load_embedding_model():
+    return EmbeddingModel()
 
 
 tokenizer = TextTokenizer()
