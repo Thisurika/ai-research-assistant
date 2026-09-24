@@ -3,3 +3,4 @@ PyMuPDF
 tiktoken
 python-dotenv
 pytest
+sentence-transformers
