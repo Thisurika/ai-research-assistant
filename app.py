@@ -3,6 +3,7 @@ import streamlit as st
 from src.chunker import create_chunks
 from src.embedding_model import EmbeddingModel
 from src.pdf_loader import extract_text_from_pdf
+from src.retriever import SemanticRetriever
 from src.tokenizer import TextTokenizer
 from src.vector_store import VectorStore
 
@@ -38,12 +39,12 @@ st.set_page_config(
 st.title("🔬 AI Research Assistant")
 
 st.write(
-    "Upload a research paper to extract, clean, tokenize, "
-    "chunk, embed and store its content in ChromaDB."
+    "Upload a research paper, process its content and "
+    "perform semantic searches using ChromaDB."
 )
 
 
-# Chunk configuration
+# Sidebar settings
 with st.sidebar:
     st.header("Chunk Settings")
 
@@ -74,6 +75,11 @@ with st.sidebar:
     )
 
 
+# Connect to the persistent vector database
+vector_store = load_vector_store()
+
+
+# PDF uploader
 uploaded_file = st.file_uploader(
     "Upload a research paper",
     type=["pdf"]
@@ -89,13 +95,13 @@ if uploaded_file is not None:
             )
             st.stop()
 
-        # Convert the uploaded PDF into bytes
+        # Read the PDF as bytes
         pdf_bytes = uploaded_file.getvalue()
 
-        # Extract and clean text page by page
+        # Extract and clean text
         pages = extract_text_from_pdf(pdf_bytes)
 
-        # Divide the pages into token-based chunks
+        # Create overlapping token-based chunks
         chunks = create_chunks(
             pages=pages,
             source_name=uploaded_file.name,
@@ -103,7 +109,7 @@ if uploaded_file is not None:
             chunk_overlap=chunk_overlap
         )
 
-        # Calculate statistics
+        # Calculate document statistics
         total_words = sum(
             len(page["text"].split())
             for page in pages
@@ -142,17 +148,25 @@ if uploaded_file is not None:
         )
 
         # Application tabs
-        page_tab, chunk_tab, database_tab = st.tabs(
+        (
+            page_tab,
+            chunk_tab,
+            database_tab,
+            search_tab
+        ) = st.tabs(
             [
                 "Extracted Pages",
                 "Generated Chunks",
-                "Vector Database"
+                "Vector Database",
+                "Semantic Search"
             ]
         )
 
-        # Page display
+        # --------------------------------------------
+        # Extracted pages
+        # --------------------------------------------
         with page_tab:
-            st.subheader("Extracted and cleaned text")
+            st.subheader("Extracted and Cleaned Text")
 
             for page in pages:
                 page_number = page["page_number"]
@@ -179,9 +193,11 @@ if uploaded_file is not None:
                             "on this page."
                         )
 
-        # Chunk display
+        # --------------------------------------------
+        # Generated chunks
+        # --------------------------------------------
         with chunk_tab:
-            st.subheader("Token-based chunks")
+            st.subheader("Token-Based Chunks")
 
             st.caption(
                 f"Chunk size: {chunk_size} tokens | "
@@ -214,19 +230,19 @@ if uploaded_file is not None:
                         }
                     )
 
-        # Embedding and ChromaDB storage
+        # --------------------------------------------
+        # Vector database
+        # --------------------------------------------
         with database_tab:
             st.subheader(
-                "Embeddings and ChromaDB storage"
+                "Embeddings and ChromaDB Storage"
             )
 
             st.write(
                 "Generate a semantic embedding for every "
-                "chunk and store the vectors, text and "
+                "chunk and store its vector, text and "
                 "metadata in ChromaDB."
             )
-
-            vector_store = load_vector_store()
 
             stored_count_placeholder = st.empty()
 
@@ -242,13 +258,13 @@ if uploaded_file is not None:
 
             elif st.button(
                 "Generate and Store Embeddings",
-                type="primary"
+                type="primary",
+                key="store_embeddings_button"
             ):
                 try:
                     with st.spinner(
-                        "Loading the embedding model, "
-                        "generating vectors and saving "
-                        "them to ChromaDB..."
+                        "Generating embeddings and storing "
+                        "them in ChromaDB..."
                     ):
                         embedding_model = (
                             load_embedding_model()
@@ -272,7 +288,6 @@ if uploaded_file is not None:
                         "stored successfully."
                     )
 
-                    # Update the displayed database count
                     stored_count_placeholder.metric(
                         "Chunks currently stored",
                         vector_store.count()
@@ -306,17 +321,127 @@ if uploaded_file is not None:
                         language="python"
                     )
 
-                    st.info(
-                        "Every chunk now has a semantic "
-                        "vector, original text and metadata "
-                        "stored in the vector database."
-                    )
-
                 except Exception as database_error:
                     st.error(
                         "Could not generate or store "
                         f"embeddings: {database_error}"
                     )
+
+        # --------------------------------------------
+        # Semantic search
+        # --------------------------------------------
+        with search_tab:
+            st.subheader("Semantic Search")
+
+            st.write(
+                "Ask a question and retrieve the most "
+                "relevant chunks from ChromaDB."
+            )
+
+            stored_count = vector_store.count()
+
+            st.metric(
+                "Available searchable chunks",
+                stored_count
+            )
+
+            if stored_count == 0:
+                st.warning(
+                    "The vector database is empty. Open the "
+                    "Vector Database tab and generate the "
+                    "embeddings first."
+                )
+
+            else:
+                question = st.text_input(
+                    "Enter your question",
+                    placeholder=(
+                        "Example: What dataset was used "
+                        "in this research?"
+                    )
+                )
+
+                number_of_results = st.slider(
+                    "Number of results",
+                    min_value=1,
+                    max_value=min(10, stored_count),
+                    value=min(3, stored_count),
+                    key="search_results_slider"
+                )
+
+                if st.button(
+                    "Search Documents",
+                    type="primary",
+                    key="semantic_search_button"
+                ):
+                    try:
+                        with st.spinner(
+                            "Searching for relevant chunks..."
+                        ):
+                            embedding_model = (
+                                load_embedding_model()
+                            )
+
+                            retriever = SemanticRetriever(
+                                embedding_model=(
+                                    embedding_model
+                                ),
+                                vector_store=vector_store
+                            )
+
+                            retrieved_chunks = (
+                                retriever.retrieve(
+                                    question=question,
+                                    number_of_results=(
+                                        number_of_results
+                                    )
+                                )
+                            )
+
+                        st.success(
+                            f"Found {len(retrieved_chunks)} "
+                            "relevant chunks."
+                        )
+
+                        for result in retrieved_chunks:
+                            st.markdown(
+                                f"### Result {result['rank']}"
+                            )
+
+                            source_column, page_column = (
+                                st.columns(2)
+                            )
+
+                            source_column.write(
+                                f"Source: {result['source']}"
+                            )
+
+                            page_column.write(
+                                f"Page: "
+                                f"{result['page_number']}"
+                            )
+
+                            st.write(result["text"])
+
+                            st.caption(
+                                f"Chunk ID: "
+                                f"{result['chunk_id']} | "
+                                f"Tokens: "
+                                f"{result['token_count']} | "
+                                f"Distance: "
+                                f"{result['distance']:.4f}"
+                            )
+
+                            st.divider()
+
+                    except ValueError as search_error:
+                        st.error(str(search_error))
+
+                    except Exception as search_error:
+                        st.error(
+                            f"Semantic search failed: "
+                            f"{search_error}"
+                        )
 
     except ValueError as error:
         st.error(str(error))
@@ -330,3 +455,11 @@ else:
     st.info(
         "Please upload a PDF research paper."
     )
+
+    stored_count = vector_store.count()
+
+    if stored_count > 0:
+        st.caption(
+            f"ChromaDB currently contains "
+            f"{stored_count} searchable chunks."
+        )
