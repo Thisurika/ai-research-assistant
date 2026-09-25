@@ -1,11 +1,17 @@
 import streamlit as st
+from dotenv import load_dotenv
 
 from src.chunker import create_chunks
 from src.embedding_model import EmbeddingModel
+from src.llm_service import GeminiService
 from src.pdf_loader import extract_text_from_pdf
 from src.retriever import SemanticRetriever
 from src.tokenizer import TextTokenizer
 from src.vector_store import VectorStore
+
+
+# Load environment variables from .env
+load_dotenv()
 
 
 tokenizer = TextTokenizer()
@@ -13,20 +19,17 @@ tokenizer = TextTokenizer()
 
 @st.cache_resource
 def load_embedding_model() -> EmbeddingModel:
-    """
-    Load the embedding model once and reuse it.
-    """
-
     return EmbeddingModel()
 
 
 @st.cache_resource
 def load_vector_store() -> VectorStore:
-    """
-    Create one persistent ChromaDB connection.
-    """
-
     return VectorStore()
+
+
+@st.cache_resource
+def load_llm_service() -> GeminiService:
+    return GeminiService()
 
 
 st.set_page_config(
@@ -39,9 +42,13 @@ st.set_page_config(
 st.title("🔬 AI Research Assistant")
 
 st.write(
-    "Upload a research paper, process its content and "
-    "perform semantic searches using ChromaDB."
+    "Upload a research paper, create a searchable knowledge "
+    "base and ask questions using RAG."
 )
+
+
+# Connect to ChromaDB
+vector_store = load_vector_store()
 
 
 # Sidebar settings
@@ -64,19 +71,24 @@ with st.sidebar:
         value=80,
         step=10,
         help=(
-            "Number of tokens repeated between "
+            "Number of repeated tokens between "
             "neighbouring chunks."
         )
     )
 
     st.caption(
-        "Recommended starting values: "
-        "400 tokens with an 80-token overlap."
+        "Recommended: 400 tokens with an "
+        "80-token overlap."
     )
 
+    st.divider()
 
-# Connect to the persistent vector database
-vector_store = load_vector_store()
+    st.subheader("Database Information")
+
+    st.metric(
+        "Stored chunks",
+        vector_store.count()
+    )
 
 
 # PDF uploader
@@ -88,20 +100,21 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
     try:
-        # Validate chunk settings
+        # Validate settings
         if chunk_overlap >= chunk_size:
             st.error(
-                "Chunk overlap must be smaller than chunk size."
+                "Chunk overlap must be smaller "
+                "than chunk size."
             )
             st.stop()
 
-        # Read the PDF as bytes
+        # Read PDF bytes
         pdf_bytes = uploaded_file.getvalue()
 
-        # Extract and clean text
+        # Extract and clean PDF text
         pages = extract_text_from_pdf(pdf_bytes)
 
-        # Create overlapping token-based chunks
+        # Create token-based chunks
         chunks = create_chunks(
             pages=pages,
             source_name=uploaded_file.name,
@@ -109,7 +122,7 @@ if uploaded_file is not None:
             chunk_overlap=chunk_overlap
         )
 
-        # Calculate document statistics
+        # Calculate statistics
         total_words = sum(
             len(page["text"].split())
             for page in pages
@@ -124,7 +137,7 @@ if uploaded_file is not None:
             f"Successfully processed: {uploaded_file.name}"
         )
 
-        # Display statistics
+        # Document statistics
         column1, column2, column3, column4 = st.columns(4)
 
         column1.metric(
@@ -152,21 +165,25 @@ if uploaded_file is not None:
             page_tab,
             chunk_tab,
             database_tab,
-            search_tab
+            search_tab,
+            rag_tab
         ) = st.tabs(
             [
                 "Extracted Pages",
                 "Generated Chunks",
                 "Vector Database",
-                "Semantic Search"
+                "Semantic Search",
+                "Ask AI"
             ]
         )
 
-        # --------------------------------------------
+        # --------------------------------------------------
         # Extracted pages
-        # --------------------------------------------
+        # --------------------------------------------------
         with page_tab:
-            st.subheader("Extracted and Cleaned Text")
+            st.subheader(
+                "Extracted and Cleaned Text"
+            )
 
             for page in pages:
                 page_number = page["page_number"]
@@ -184,7 +201,8 @@ if uploaded_file is not None:
                         st.write(page_text)
 
                         st.caption(
-                            f"Words: {len(page_text.split())} | "
+                            f"Words: "
+                            f"{len(page_text.split())} | "
                             f"Tokens: {page_token_count}"
                         )
                     else:
@@ -193,9 +211,9 @@ if uploaded_file is not None:
                             "on this page."
                         )
 
-        # --------------------------------------------
+        # --------------------------------------------------
         # Generated chunks
-        # --------------------------------------------
+        # --------------------------------------------------
         with chunk_tab:
             st.subheader("Token-Based Chunks")
 
@@ -230,18 +248,17 @@ if uploaded_file is not None:
                         }
                     )
 
-        # --------------------------------------------
+        # --------------------------------------------------
         # Vector database
-        # --------------------------------------------
+        # --------------------------------------------------
         with database_tab:
             st.subheader(
                 "Embeddings and ChromaDB Storage"
             )
 
             st.write(
-                "Generate a semantic embedding for every "
-                "chunk and store its vector, text and "
-                "metadata in ChromaDB."
+                "Generate semantic embeddings and store "
+                "the vectors, text and metadata in ChromaDB."
             )
 
             stored_count_placeholder = st.empty()
@@ -253,13 +270,13 @@ if uploaded_file is not None:
 
             if not chunks:
                 st.warning(
-                    "No chunks are available for embedding."
+                    "No chunks are available."
                 )
 
             elif st.button(
                 "Generate and Store Embeddings",
                 type="primary",
-                key="store_embeddings_button"
+                key="store_embeddings"
             ):
                 try:
                     with st.spinner(
@@ -309,33 +326,33 @@ if uploaded_file is not None:
 
                     st.write(
                         "First 10 values from the first "
-                        "chunk embedding:"
-                    )
-
-                    embedding_preview = (
-                        chunk_embeddings[0][:10].tolist()
+                        "embedding:"
                     )
 
                     st.code(
-                        str(embedding_preview),
+                        str(
+                            chunk_embeddings[0][
+                                :10
+                            ].tolist()
+                        ),
                         language="python"
                     )
 
                 except Exception as database_error:
                     st.error(
-                        "Could not generate or store "
-                        f"embeddings: {database_error}"
+                        "Could not store embeddings: "
+                        f"{database_error}"
                     )
 
-        # --------------------------------------------
+        # --------------------------------------------------
         # Semantic search
-        # --------------------------------------------
+        # --------------------------------------------------
         with search_tab:
             st.subheader("Semantic Search")
 
             st.write(
-                "Ask a question and retrieve the most "
-                "relevant chunks from ChromaDB."
+                "Search for document passages based "
+                "on meaning."
             )
 
             stored_count = vector_store.count()
@@ -347,32 +364,31 @@ if uploaded_file is not None:
 
             if stored_count == 0:
                 st.warning(
-                    "The vector database is empty. Open the "
-                    "Vector Database tab and generate the "
-                    "embeddings first."
+                    "Store document embeddings before "
+                    "using semantic search."
                 )
 
             else:
-                question = st.text_input(
-                    "Enter your question",
+                search_question = st.text_input(
+                    "Enter your search question",
                     placeholder=(
-                        "Example: What dataset was used "
-                        "in this research?"
-                    )
+                        "What dataset was used?"
+                    ),
+                    key="semantic_question"
                 )
 
-                number_of_results = st.slider(
-                    "Number of results",
+                search_result_count = st.slider(
+                    "Number of search results",
                     min_value=1,
                     max_value=min(10, stored_count),
                     value=min(3, stored_count),
-                    key="search_results_slider"
+                    key="semantic_result_count"
                 )
 
                 if st.button(
                     "Search Documents",
                     type="primary",
-                    key="semantic_search_button"
+                    key="semantic_search"
                 ):
                     try:
                         with st.spinner(
@@ -391,21 +407,23 @@ if uploaded_file is not None:
 
                             retrieved_chunks = (
                                 retriever.retrieve(
-                                    question=question,
+                                    question=search_question,
                                     number_of_results=(
-                                        number_of_results
+                                        search_result_count
                                     )
                                 )
                             )
 
                         st.success(
-                            f"Found {len(retrieved_chunks)} "
+                            f"Found "
+                            f"{len(retrieved_chunks)} "
                             "relevant chunks."
                         )
 
                         for result in retrieved_chunks:
                             st.markdown(
-                                f"### Result {result['rank']}"
+                                f"### Result "
+                                f"{result['rank']}"
                             )
 
                             source_column, page_column = (
@@ -413,7 +431,8 @@ if uploaded_file is not None:
                             )
 
                             source_column.write(
-                                f"Source: {result['source']}"
+                                f"Source: "
+                                f"{result['source']}"
                             )
 
                             page_column.write(
@@ -441,6 +460,130 @@ if uploaded_file is not None:
                         st.error(
                             f"Semantic search failed: "
                             f"{search_error}"
+                        )
+
+        # --------------------------------------------------
+        # RAG answer generation
+        # --------------------------------------------------
+        with rag_tab:
+            st.subheader(
+                "Ask the AI Research Assistant"
+            )
+
+            st.write(
+                "The system retrieves relevant evidence "
+                "from ChromaDB and sends that evidence "
+                "to Gemini to generate an answer."
+            )
+
+            stored_count = vector_store.count()
+
+            if stored_count == 0:
+                st.warning(
+                    "The vector database is empty. "
+                    "Generate and store embeddings first."
+                )
+
+            else:
+                rag_question = st.text_area(
+                    "Ask a question",
+                    placeholder=(
+                        "What methodology was used "
+                        "in this research?"
+                    ),
+                    key="rag_question"
+                )
+
+                context_chunk_count = st.slider(
+                    "Number of context chunks",
+                    min_value=1,
+                    max_value=min(10, stored_count),
+                    value=min(4, stored_count),
+                    key="rag_context_count"
+                )
+
+                if st.button(
+                    "Generate Answer",
+                    type="primary",
+                    key="generate_answer"
+                ):
+                    try:
+                        with st.spinner(
+                            "Retrieving evidence and "
+                            "generating an answer..."
+                        ):
+                            # Load the embedding model
+                            embedding_model = (
+                                load_embedding_model()
+                            )
+
+                            # Retrieve related chunks
+                            retriever = SemanticRetriever(
+                                embedding_model=(
+                                    embedding_model
+                                ),
+                                vector_store=vector_store
+                            )
+
+                            retrieved_chunks = (
+                                retriever.retrieve(
+                                    question=rag_question,
+                                    number_of_results=(
+                                        context_chunk_count
+                                    )
+                                )
+                            )
+
+                            # Load Gemini
+                            llm_service = (
+                                load_llm_service()
+                            )
+
+                            # Generate the grounded answer
+                            answer = (
+                                llm_service.generate_answer(
+                                    question=rag_question,
+                                    retrieved_chunks=(
+                                        retrieved_chunks
+                                    )
+                                )
+                            )
+
+                        st.subheader("Answer")
+
+                        st.write(answer)
+
+                        st.subheader(
+                            "Retrieved Evidence"
+                        )
+
+                        for result in retrieved_chunks:
+                            with st.expander(
+                                f"Source: "
+                                f"{result['source']} — "
+                                f"Page "
+                                f"{result['page_number']}"
+                            ):
+                                st.write(
+                                    result["text"]
+                                )
+
+                                st.caption(
+                                    f"Retrieval rank: "
+                                    f"{result['rank']} | "
+                                    f"Chunk ID: "
+                                    f"{result['chunk_id']} | "
+                                    f"Distance: "
+                                    f"{result['distance']:.4f}"
+                                )
+
+                    except ValueError as rag_error:
+                        st.error(str(rag_error))
+
+                    except Exception as rag_error:
+                        st.error(
+                            "Could not generate the answer: "
+                            f"{rag_error}"
                         )
 
     except ValueError as error:

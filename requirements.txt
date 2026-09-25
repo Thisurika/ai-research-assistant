@@ -4,3 +4,5 @@ tiktoken
 python-dotenv
 pytest
 sentence-transformers
+google-genai
+python-dotenv
